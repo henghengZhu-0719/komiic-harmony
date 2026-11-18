@@ -56,12 +56,33 @@ komiic/
   Sdk.ets          单例门面，页面只用这个
 components/
   KomiicImage.ets  会带 Referer 的 Image
+utils/
+  Orientation.ets  阅读页的屏幕方向（自动 / 锁竖 / 锁横）
 pages/
   Index.ets        最近更新 / 排行榜 / 分类 / 搜索
   Detail.ets       详情 + 章节列表 + 收藏
   Reader.ets       竖向连续阅读
   Settings.ets     登录、推荐开关、清缓存
 ```
+
+## 阅读页的旋转
+
+三档方向，进阅读页生效，退出去自动还原，选的档位记在 preferences（`reader.orientation`）里。
+
+- **自动**：`AUTO_ROTATION_RESTRICTED`，跟着传感器转，同时尊重系统的「旋转锁定」开关
+- **竖屏 / 横屏**：`setPreferredOrientation` 强制锁住，不理传感器
+
+两种切换方式：
+
+- **两指拧一下**（`RotationGesture`，两指、15° 触发）。往一边拧锁横屏，往另一边拧锁竖屏；
+  已经锁在那个方向时再拧一次回到自动。拧的方向和结果对不上手感就往反方向拧，逻辑是对称的
+- 点屏幕呼出控制条，右上角那颗按钮按一下换一档
+
+横竖屏的排版差别：竖屏还是长图连续滚；横屏给每页加一个「最大高度 = 屏幕高度」的约束，
+整页塞进一屏、两边留黑，翻屏时会把当前页重新对齐到顶端。尺寸靠根容器的 `onAreaChange`
+实测，没用 `mediaquery`（那套 API 已经标 deprecated）。
+
+运行时设的方向优先级高于 `module.json5` 里的 `orientation`，所以工程配置不用动。
 
 ## 三个必须知道的点
 

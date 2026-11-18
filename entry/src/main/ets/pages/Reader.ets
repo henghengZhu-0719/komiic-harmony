@@ -1,5 +1,8 @@
 /**
  * 阅读页：竖向连续滚动，点中间呼出控制条，支持上一话 / 下一话。
+ *
+ * 方向：默认跟传感器转（尊重系统旋转锁定）；两指拧一下强制锁竖 / 锁横，
+ * 控制条右上角那颗按钮也能换档。横屏时整页按屏幕高度贴合，一屏一页。
  */
 
 import { common } from '@kit.AbilityKit';
@@ -8,11 +11,26 @@ import { KomiicImage } from '../components/KomiicImage';
 import { chapterRefererOf, imageUrlOf } from '../komiic/Config';
 import { getSdk } from '../komiic/Sdk';
 import { ChapterRef, KomiicImage as KomiicImageData, PageRef } from '../komiic/Types';
+import {
+  applyOrientation,
+  nextOrientationMode,
+  OrientationMode,
+  orientationLabel,
+  orientationModeKey,
+  parseOrientationMode,
+  releaseOrientation
+} from '../utils/Orientation';
 
 export interface ReaderParams {
   comicId: string;
   chapterId: string;
   chapterName: string;
+}
+
+/** Area 里的长度可能是数字也可能是带单位的字符串，统一成 vp 数字。 */
+function toVp(value: Length): number {
+  const parsed = Number.parseFloat(`${value}`);
+  return Number.isNaN(parsed) ? 0 : parsed;
 }
 
 @Entry
@@ -29,6 +47,11 @@ struct Reader {
   @State private showControls: boolean = false;
   @State private currentIndex: number = 0;
 
+  @State private orientationMode: OrientationMode = OrientationMode.AUTO;
+  /** 内容区实测尺寸（vp），横竖屏判断和整页贴合都靠它。 */
+  @State private viewWidth: number = 0;
+  @State private viewHeight: number = 0;
+
   private scroller: Scroller = new Scroller();
 
   aboutToAppear(): void {
@@ -39,12 +62,72 @@ struct Reader {
       this.chapterName = params.chapterName;
     }
     this.load();
+    this.restoreOrientation();
   }
 
   aboutToDisappear(): void {
     // 整章大图占内存，离开就放开引用（磁盘缓存还在，回来不用重下）。
     const context = getContext(this) as common.Context;
     getSdk(context).then((sdk) => sdk.images.clearMemory());
+    releaseOrientation(context);
+  }
+
+  /** 上次锁的方向记在 preferences 里，进来就恢复。 */
+  private async restoreOrientation(): Promise<void> {
+    const context = getContext(this) as common.Context;
+    try {
+      const sdk = await getSdk(context);
+      this.orientationMode = parseOrientationMode(await sdk.store.getReaderOrientation());
+    } catch (e) {
+      this.orientationMode = OrientationMode.AUTO;
+    }
+    await applyOrientation(context, this.orientationMode);
+  }
+
+  private setOrientationMode(mode: OrientationMode): void {
+    if (mode === this.orientationMode) {
+      return;
+    }
+    this.orientationMode = mode;
+    const context = getContext(this) as common.Context;
+    applyOrientation(context, mode);
+    getSdk(context).then((sdk) => sdk.store.setReaderOrientation(orientationModeKey(mode)));
+    promptAction.showToast({ message: `屏幕方向：${orientationLabel(mode)}` });
+  }
+
+  /**
+   * 两指拧动：往哪边拧就锁哪边，已经锁在那边再拧一次回到自动。
+   * 拧的方向和锁定方向对不上手感的话，往另一边拧就是了。
+   */
+  private onTwist(angle: number): void {
+    const target = angle < 0 ? OrientationMode.LANDSCAPE : OrientationMode.PORTRAIT;
+    this.setOrientationMode(this.orientationMode === target ? OrientationMode.AUTO : target);
+  }
+
+  /** 转屏后内容区尺寸会变，这里顺手把当前页重新对齐到屏幕顶端。 */
+  private onResize(area: Area): void {
+    const width = toVp(area.width);
+    const height = toVp(area.height);
+    if (width <= 0 || height <= 0) {
+      return;
+    }
+    const wasLandscape = this.isLandscape();
+    this.viewWidth = width;
+    this.viewHeight = height;
+    // 只有 List 真的在屏幕上时 scroller 才可用，加载中 / 出错时别碰。
+    const listAlive = !this.loading && this.errorText.length === 0 && this.pages.length > 0;
+    if (listAlive && this.isLandscape() !== wasLandscape) {
+      this.scroller.scrollToIndex(this.currentIndex);
+    }
+  }
+
+  private isLandscape(): boolean {
+    return this.viewHeight > 0 && this.viewWidth > this.viewHeight;
+  }
+
+  /** 竖屏还是老样子长图连读；横屏把整页压进一屏。 */
+  private pageMaxHeight(): number {
+    return this.isLandscape() ? this.viewHeight : 0;
   }
 
   private async load(): Promise<void> {
@@ -129,12 +212,23 @@ struct Reader {
           .fontSize(15)
           .fontColor(Color.White)
           .onClick(() => router.back())
-        Blank()
+
         Text(this.chapterName)
           .fontSize(15)
           .fontColor(Color.White)
           .maxLines(1)
+          .textAlign(TextAlign.Center)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .layoutWeight(1)
+          .margin({ left: 12, right: 12 })
+
+        Text(orientationLabel(this.orientationMode))
+          .fontSize(13)
+          .fontColor(Color.White)
+          .padding({ left: 12, right: 12, top: 5, bottom: 5 })
+          .borderRadius(14)
+          .backgroundColor('rgba(255,255,255,0.18)')
+          .onClick(() => this.setOrientationMode(nextOrientationMode(this.orientationMode)))
       }
       .width('100%')
       .padding({ left: 16, right: 16, top: 12, bottom: 12 })
@@ -209,7 +303,9 @@ struct Reader {
               KomiicImage({
                 url: page.url,
                 referer: page.referer,
-                autoHeight: true
+                autoHeight: true,
+                boxWidth: this.viewWidth,
+                maxHeight: this.pageMaxHeight()
               })
                 .width('100%')
             }
@@ -245,5 +341,11 @@ struct Reader {
     .width('100%')
     .height('100%')
     .backgroundColor(Color.Black)
+    .onAreaChange((oldArea: Area, newArea: Area) => this.onResize(newArea))
+    // 两指的手势，跟 List 的单指滚动不打架；priority 是为了不被列表先吃掉。
+    .priorityGesture(
+      RotationGesture({ fingers: 2, angle: 15 })
+        .onActionEnd((event: GestureEvent) => this.onTwist(event.angle))
+    )
   }
 }

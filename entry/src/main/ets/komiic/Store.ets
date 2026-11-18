@@ -12,6 +12,7 @@ const KEY_ACCOUNT: string = 'auth.account';
 const KEY_PASSWORD: string = 'auth.password';
 const KEY_TOKEN: string = 'auth.token';
 const KEY_RECOMMEND: string = 'feature.recommend.enabled';
+const KEY_READER_ORIENTATION: string = 'reader.orientation';
 
 export class KomiicStore {
   private store: preferences.Preferences | null = null;
@@ -87,6 +88,15 @@ export class KomiicStore {
 
   async setRecommendEnabled(value: boolean): Promise<void> {
     await this.putString(KEY_RECOMMEND, value ? 'true' : 'false');
+  }
+
+  /** 阅读页的方向档位，取值见 utils/Orientation 的 orientationModeKey。 */
+  async getReaderOrientation(): Promise<string> {
+    return (await this.getString(KEY_READER_ORIENTATION, 'auto')).trim();
+  }
+
+  async setReaderOrientation(value: string): Promise<void> {
+    await this.putString(KEY_READER_ORIENTATION, value);
   }
 
   /** 是否存了账号密码，够做静默重登。 */
